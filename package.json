@@ -1,0 +1,22 @@
+{
+  "name": "figjam-bridge",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node bridge/index.js",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@modelcontextprotocol/sdk": "^1.10.1",
+    "ws": "^8.18.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "transform": {},
+    "testEnvironment": "node"
+  }
+}
