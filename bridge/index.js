@@ -12,8 +12,10 @@ const handleAskClaude = buildClaudeHandler(client);
 
 // Handle plugin-initiated "Ask Claude"
 wsServer.wss.on('connection', ws => {
+  console.error('[bridge] plugin connected');
   ws.on('message', async raw => {
     const msg = JSON.parse(raw.toString());
+    console.error('[bridge] message received:', JSON.stringify(msg).slice(0, 200));
     if (msg.event === 'ask_claude') {
       try {
         // Enrich payload with diff from last known state, then update stateStore

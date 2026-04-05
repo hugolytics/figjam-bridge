@@ -1,6 +1,7 @@
 // plugin/code.js
 // Runs in Figma's plugin sandbox — no browser APIs (no WebSocket, fetch, setTimeout).
 // WebSocket lives in ui.html. This file only touches the Figma scene.
+// NOTE: avoid async/await in figma.ui.onmessage — use .then() chaining for reliability.
 
 figma.showUI(__html__, { width: 220, height: 280 });
 
@@ -122,10 +123,10 @@ function renderD2(source, frame, replyId) {
 }
 
 // ---- UI message handler ----
-// Messages arrive from ui.html — either user actions or forwarded bridge commands.
-figma.ui.onmessage = async function(msg) {
+figma.ui.onmessage = function(msg) {
+  console.log('[code.js] received message:', msg.type);
 
-  // --- User actions (no bridge response needed) ---
+  // --- User actions ---
 
   if (msg.type === 'new_session') {
     var date = new Date().toISOString().slice(0, 10);
@@ -136,31 +137,41 @@ figma.ui.onmessage = async function(msg) {
     frame.y = figma.viewport.center.y - 400;
     sessionFrameId = frame.id;
     figma.viewport.scrollAndZoomIntoView([frame]);
+    console.log('[code.js] session created:', sessionFrameId);
     return;
   }
 
-  // "Ask Claude" button: serialize canvas + PNG, send back to UI for forwarding to bridge
   if (msg.type === 'ask_claude') {
+    console.log('[code.js] ask_claude: serializing canvas');
     var payload = serializeCanvas();
     var frame = getSessionFrame();
     if (frame) {
-      var bytes = await frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
-      figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: bytes });
+      frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } }).then(function(bytes) {
+        console.log('[code.js] ask_claude: PNG exported, sending payload');
+        figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: bytes });
+      }).catch(function(err) {
+        console.error('[code.js] ask_claude exportAsync error:', err);
+        figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: null });
+      });
     } else {
+      console.log('[code.js] ask_claude: no session frame, sending without PNG');
       figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: null });
     }
     return;
   }
 
   // --- Bridge commands forwarded from ui.html ---
-  // All have { type, id, ...args } and expect { type: 'bridge_response', id, result }
 
   if (msg.type === 'get_snapshot') {
     var payload = serializeCanvas();
     var frame = getSessionFrame();
     if (frame) {
-      var bytes = await frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
-      figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: bytes });
+      frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } }).then(function(bytes) {
+        figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: bytes });
+      }).catch(function(err) {
+        console.error('[code.js] get_snapshot exportAsync error:', err);
+        figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: null });
+      });
     } else {
       figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: null });
     }
@@ -174,7 +185,10 @@ figma.ui.onmessage = async function(msg) {
 
   if (msg.type === 'create_sticky') {
     var frame = getSessionFrame();
-    if (!frame) { figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } }); return; }
+    if (!frame) {
+      figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } });
+      return;
+    }
     var sticky = figma.createSticky();
     sticky.text.characters = msg.text || '';
     sticky.x = msg.x || 0;
@@ -191,14 +205,18 @@ figma.ui.onmessage = async function(msg) {
 
   if (msg.type === 'create_text') {
     var frame = getSessionFrame();
-    if (!frame) { figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } }); return; }
-    var text = figma.createText();
-    await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
-    text.characters = msg.text || '';
-    text.x = msg.x || 0;
-    text.y = msg.y || 0;
-    frame.appendChild(text);
-    figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: text.id } });
+    if (!frame) {
+      figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } });
+      return;
+    }
+    figma.loadFontAsync({ family: 'Inter', style: 'Regular' }).then(function() {
+      var text = figma.createText();
+      text.characters = msg.text || '';
+      text.x = msg.x || 0;
+      text.y = msg.y || 0;
+      frame.appendChild(text);
+      figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: text.id } });
+    });
     return;
   }
 
