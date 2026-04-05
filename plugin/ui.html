@@ -22,6 +22,7 @@
       height: 8px;
       border-radius: 50%;
       background: #e05c5c;
+      flex-shrink: 0;
     }
     .dot.connected { background: #5ce06a; }
     button {
@@ -71,27 +72,97 @@
   <textarea id="d2-source" readonly placeholder="No D2 yet"></textarea>
 
   <script>
+    const WS_URL = 'ws://localhost:3100';
     const dot = document.getElementById('dot');
     const statusText = document.getElementById('status-text');
-    const btnSession = document.getElementById('btn-session');
     const btnAsk = document.getElementById('btn-ask');
     const d2Area = document.getElementById('d2-source');
 
+    let ws = null;
+
+    // ---- WebSocket ----
+    function connect() {
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        dot.className = 'dot connected';
+        statusText.textContent = 'Connected';
+        btnAsk.disabled = false;
+      };
+
+      ws.onclose = () => {
+        dot.className = 'dot';
+        statusText.textContent = 'Disconnected';
+        btnAsk.disabled = true;
+        setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => ws.close();
+
+      // Bridge → plugin: forward command to code.js
+      ws.onmessage = (event) => {
+        const cmd = JSON.parse(event.data);
+        parent.postMessage({ pluginMessage: cmd }, '*');
+      };
+    }
+    connect();
+
+    function sendToBridge(data) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
+      }
+    }
+
+    function bytesToBase64(bytes) {
+      const arr = new Uint8Array(bytes);
+      let binary = '';
+      for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+      return btoa(binary);
+    }
+
+    // ---- Plugin → UI messages from code.js ----
     window.onmessage = ({ data: { pluginMessage: msg } }) => {
       if (!msg) return;
-      if (msg.type === 'connection_status') {
-        const connected = msg.connected;
-        dot.className = 'dot' + (connected ? ' connected' : '');
-        statusText.textContent = connected ? 'Connected' : 'Disconnected';
-        btnAsk.disabled = !connected;
+
+      // Generic bridge response (create_sticky, create_text, get_d2, update_d2, etc.)
+      if (msg.type === 'bridge_response') {
+        sendToBridge({ id: msg.id, result: msg.result });
+        return;
       }
+
+      // Snapshot response (get_snapshot) — needs PNG bytes → base64
+      if (msg.type === 'snapshot_result') {
+        const payload = Object.assign({}, msg.payload, {
+          snapshot_png: msg.pngBytes ? bytesToBase64(msg.pngBytes) : '',
+        });
+        sendToBridge({ id: msg.id, result: payload });
+        return;
+      }
+
+      // Ask Claude response — send as event to bridge
+      if (msg.type === 'ask_claude_payload') {
+        const payload = Object.assign({}, msg.payload, {
+          snapshot_png: msg.pngBytes ? bytesToBase64(msg.pngBytes) : '',
+        });
+        sendToBridge({ event: 'ask_claude', payload });
+        return;
+      }
+
+      // D2 textarea update
       if (msg.type === 'd2_update') {
         d2Area.value = msg.d2_source;
+        return;
       }
     };
 
-    btnSession.onclick = () => parent.postMessage({ pluginMessage: { type: 'new_session' } }, '*');
-    btnAsk.onclick = () => parent.postMessage({ pluginMessage: { type: 'ask_claude' } }, '*');
+    // ---- Button handlers ----
+    document.getElementById('btn-session').onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'new_session' } }, '*');
+    };
+
+    document.getElementById('btn-ask').onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'ask_claude' } }, '*');
+    };
   </script>
 </body>
 </html>

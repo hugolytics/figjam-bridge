@@ -1,14 +1,13 @@
 // plugin/code.js
-// Runs in Figma's plugin sandbox — no ES module imports.
+// Runs in Figma's plugin sandbox — no browser APIs (no WebSocket, fetch, setTimeout).
+// WebSocket lives in ui.html. This file only touches the Figma scene.
 
 figma.showUI(__html__, { width: 220, height: 280 });
 
-const WS_URL = 'ws://localhost:3100';
-let ws = null;
-let sessionFrameId = null;
-let d2Source = '';
+var sessionFrameId = null;
+var d2Source = '';
 
-// ---- Spatial correlation (inlined from spatial.js) ----
+// ---- Spatial correlation ----
 function associateStrokesWithNodes(strokes, nodes, threshold) {
   threshold = threshold || 80;
   return strokes.map(function(stroke) {
@@ -25,26 +24,6 @@ function associateStrokesWithNodes(strokes, nodes, threshold) {
   });
 }
 
-// ---- WebSocket ----
-function connect() {
-  ws = new WebSocket(WS_URL);
-  ws.onopen = function() { figma.ui.postMessage({ type: 'connection_status', connected: true }); };
-  ws.onclose = function() {
-    figma.ui.postMessage({ type: 'connection_status', connected: false });
-    setTimeout(connect, 3000);
-  };
-  ws.onerror = function() { ws.close(); };
-  ws.onmessage = function(event) {
-    var cmd = JSON.parse(event.data);
-    handleBridgeCommand(cmd);
-  };
-}
-connect();
-
-function sendResponse(id, result) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ id: id, result: result }));
-}
-
 // ---- Session frame ----
 function getSessionFrame() {
   if (sessionFrameId) {
@@ -56,7 +35,7 @@ function getSessionFrame() {
 
 function serializeCanvas() {
   var frame = getSessionFrame();
-  if (!frame) return { nodes: [], edges: [], strokes: [], snapshot_png: '' };
+  if (!frame) return { nodes: [], edges: [], strokes: [] };
 
   var nodes = [];
   var edges = [];
@@ -85,73 +64,16 @@ function serializeCanvas() {
   });
 
   strokes = associateStrokesWithNodes(strokes, nodes, 80);
-  return { nodes: nodes, edges: edges, strokes: strokes, snapshot_png: '' };
-}
-
-// ---- Bridge command handler ----
-function handleBridgeCommand(cmd) {
-  var frame = getSessionFrame();
-
-  if (cmd.type === 'get_snapshot') {
-    var payload = serializeCanvas();
-    // Export frame as PNG
-    if (frame) {
-      frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } }).then(function(bytes) {
-        var b64 = figma.base64Encode(bytes);
-        payload.snapshot_png = b64;
-        sendResponse(cmd.id, payload);
-      });
-    } else {
-      sendResponse(cmd.id, payload);
-    }
-    return;
-  }
-
-  if (cmd.type === 'get_d2') {
-    sendResponse(cmd.id, { d2_source: d2Source });
-    return;
-  }
-
-  if (cmd.type === 'create_sticky') {
-    if (!frame) { sendResponse(cmd.id, { error: 'No active session' }); return; }
-    var sticky = figma.createSticky();
-    sticky.text.characters = cmd.text || '';
-    sticky.x = cmd.x || 0;
-    sticky.y = cmd.y || 0;
-    frame.appendChild(sticky);
-    sendResponse(cmd.id, { node_id: sticky.id });
-    return;
-  }
-
-  if (cmd.type === 'create_text') {
-    if (!frame) { sendResponse(cmd.id, { error: 'No active session' }); return; }
-    var text = figma.createText();
-    figma.loadFontAsync({ family: 'Inter', style: 'Regular' }).then(function() {
-      text.characters = cmd.text || '';
-      text.x = cmd.x || 0;
-      text.y = cmd.y || 0;
-      frame.appendChild(text);
-      sendResponse(cmd.id, { node_id: text.id });
-    });
-    return;
-  }
-
-  if (cmd.type === 'update_d2') {
-    d2Source = cmd.d2_source || '';
-    figma.ui.postMessage({ type: 'd2_update', d2_source: d2Source });
-    // V1: parse nodes and edges from D2 and create basic shapes
-    renderD2(d2Source, frame, cmd.id);
-    return;
-  }
-
-  sendResponse(cmd.id, { error: 'Unknown command: ' + cmd.type });
+  return { nodes: nodes, edges: edges, strokes: strokes };
 }
 
 // ---- D2 rendering (V1: basic, no layout engine) ----
-function renderD2(source, frame, cmdId) {
-  if (!frame) { sendResponse(cmdId, { ok: false, error: 'No frame' }); return; }
+function renderD2(source, frame, replyId) {
+  if (!frame) {
+    figma.ui.postMessage({ type: 'bridge_response', id: replyId, result: { ok: false, error: 'No frame' } });
+    return;
+  }
 
-  // Parse lines like: "A -> B" or "A -> B: label" or standalone node "A"
   var lines = source.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
   var nodeNames = {};
   var edgeDefs = [];
@@ -194,12 +116,17 @@ function renderD2(source, frame, cmdId) {
       connector.connectorEnd = { endpointNodeId: toNode.id, magnet: 'AUTO' };
       frame.appendChild(connector);
     });
-    sendResponse(cmdId, { ok: true });
+    figma.ui.postMessage({ type: 'bridge_response', id: replyId, result: { ok: true } });
+    figma.ui.postMessage({ type: 'd2_update', d2_source: source });
   });
 }
 
 // ---- UI message handler ----
-figma.ui.onmessage = function(msg) {
+// Messages arrive from ui.html — either user actions or forwarded bridge commands.
+figma.ui.onmessage = async function(msg) {
+
+  // --- User actions (no bridge response needed) ---
+
   if (msg.type === 'new_session') {
     var date = new Date().toISOString().slice(0, 10);
     var frame = figma.createFrame();
@@ -209,18 +136,77 @@ figma.ui.onmessage = function(msg) {
     frame.y = figma.viewport.center.y - 400;
     sessionFrameId = frame.id;
     figma.viewport.scrollAndZoomIntoView([frame]);
+    return;
   }
 
+  // "Ask Claude" button: serialize canvas + PNG, send back to UI for forwarding to bridge
   if (msg.type === 'ask_claude') {
     var payload = serializeCanvas();
     var frame = getSessionFrame();
     if (frame) {
-      frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } }).then(function(bytes) {
-        payload.snapshot_png = figma.base64Encode(bytes);
-        if (ws && ws.readyState === 1) {
-          ws.send(JSON.stringify({ event: 'ask_claude', payload: payload }));
-        }
-      });
+      var bytes = await frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
+      figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: bytes });
+    } else {
+      figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: null });
     }
+    return;
   }
+
+  // --- Bridge commands forwarded from ui.html ---
+  // All have { type, id, ...args } and expect { type: 'bridge_response', id, result }
+
+  if (msg.type === 'get_snapshot') {
+    var payload = serializeCanvas();
+    var frame = getSessionFrame();
+    if (frame) {
+      var bytes = await frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
+      figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: bytes });
+    } else {
+      figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: null });
+    }
+    return;
+  }
+
+  if (msg.type === 'get_d2') {
+    figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { d2_source: d2Source } });
+    return;
+  }
+
+  if (msg.type === 'create_sticky') {
+    var frame = getSessionFrame();
+    if (!frame) { figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } }); return; }
+    var sticky = figma.createSticky();
+    sticky.text.characters = msg.text || '';
+    sticky.x = msg.x || 0;
+    sticky.y = msg.y || 0;
+    if (msg.color) {
+      var colorMap = { blue: { r: 0.44, g: 0.64, b: 1 }, yellow: { r: 1, g: 0.93, b: 0.44 }, green: { r: 0.44, g: 0.93, b: 0.6 }, pink: { r: 1, g: 0.44, b: 0.73 } };
+      var c = colorMap[msg.color];
+      if (c) sticky.fills = [{ type: 'SOLID', color: c }];
+    }
+    frame.appendChild(sticky);
+    figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: sticky.id } });
+    return;
+  }
+
+  if (msg.type === 'create_text') {
+    var frame = getSessionFrame();
+    if (!frame) { figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } }); return; }
+    var text = figma.createText();
+    await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
+    text.characters = msg.text || '';
+    text.x = msg.x || 0;
+    text.y = msg.y || 0;
+    frame.appendChild(text);
+    figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: text.id } });
+    return;
+  }
+
+  if (msg.type === 'update_d2') {
+    d2Source = msg.d2_source || '';
+    renderD2(d2Source, getSessionFrame(), msg.id);
+    return;
+  }
+
+  figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'Unknown command: ' + msg.type } });
 };
