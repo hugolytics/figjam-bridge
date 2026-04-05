@@ -6,7 +6,7 @@
   "ui": "ui.html",
   "editorType": ["figjam"],
   "networkAccess": {
-    "allowedDomains": ["ws://localhost:3100"],
+    "allowedDomains": [],
     "devAllowedDomains": ["ws://localhost:3100"],
     "reasoning": "Connects to a local bridge server that relays canvas state to Claude via MCP"
   }
