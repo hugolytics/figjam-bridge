@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
+const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+const DEFAULT_MODEL = 'anthropic/claude-sonnet-4-5';
 
 const SYSTEM_PROMPT = `You are a thinking partner embedded in a FigJam canvas.
 The user has shared their canvas state: nodes, edges, freehand strokes, and a screenshot.
@@ -15,7 +16,8 @@ The "writes" array is optional. Use it to place stickies or text on the canvas.
 If you have no canvas writes, return an empty array.
 Do not wrap the JSON in markdown code fences.`;
 
-export function buildClaudeHandler(anthropic) {
+// client = { complete({ messages }) => Promise<string> }
+export function buildClaudeHandler(client) {
   return async function handleAskClaude(canvasPayload) {
     const { snapshot_png, ...structuredData } = canvasPayload;
 
@@ -28,19 +30,17 @@ export function buildClaudeHandler(anthropic) {
 
     if (snapshot_png) {
       userContent.push({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/png', data: snapshot_png },
+        type: 'image_url',
+        image_url: { url: `data:image/png;base64,${snapshot_png}` },
       });
     }
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userContent }],
+    const text = await client.complete({
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
+      ],
     });
-
-    const text = response.content[0]?.text ?? '';
 
     try {
       return JSON.parse(text);
@@ -50,6 +50,25 @@ export function buildClaudeHandler(anthropic) {
   };
 }
 
-export function createAnthropicClient() {
-  return new Anthropic();
+export function createOpenRouterClient(apiKey, model = DEFAULT_MODEL) {
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set');
+  return {
+    async complete({ messages }) {
+      const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://github.com/hugolytics/figjam-bridge',
+        },
+        body: JSON.stringify({ model, messages, max_tokens: 1024 }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`OpenRouter error ${res.status}: ${err}`);
+      }
+      const data = await res.json();
+      return data.choices[0]?.message?.content ?? '';
+    },
+  };
 }

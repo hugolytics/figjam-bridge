@@ -1,14 +1,14 @@
 import { createWsServer } from './ws-server.js';
 import { startMcpServer, buildTools } from './mcp-tools.js';
-import { buildClaudeHandler, createAnthropicClient } from './claude-client.js';
+import { buildClaudeHandler, createOpenRouterClient } from './claude-client.js';
 import { diffCanvas } from './canvas-diff.js';
 
 const wsServer = createWsServer(3100);
 const stateStore = { last: null };
 const tools = buildTools(wsServer, stateStore);
 
-const anthropic = createAnthropicClient();
-const handleAskClaude = buildClaudeHandler(anthropic);
+const client = createOpenRouterClient(process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_MODEL);
+const handleAskClaude = buildClaudeHandler(client);
 
 // Handle plugin-initiated "Ask Claude"
 wsServer.wss.on('connection', ws => {
