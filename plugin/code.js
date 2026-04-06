@@ -155,37 +155,58 @@ figma.on('selectionchange', function() {
   figma.ui.postMessage({ type: 'selection_changed', count: sel.length });
 });
 
-// ---- Document change listener — auto-add children of watched containers ----
+function isInsideWatchedContainer(node) {
+  var ancestor = node.parent;
+  while (ancestor) {
+    if (watchedContainerIds.indexOf(ancestor.id) !== -1) return true;
+    ancestor = ancestor.parent;
+  }
+  return false;
+}
+
+// ---- Document change listener ----
 figma.on('documentchange', function(event) {
-  var added = false;
+  var changed = false;
+
   event.documentChanges.forEach(function(change) {
-    if (change.type !== 'CREATE') return;
-    var node = figma.getNodeById(change.id);
-    if (!node) return;
-
-    var shouldAdd = false;
-
-    if (watchAll) {
-      shouldAdd = true;
-    } else if (node.parent) {
-      // Auto-add if parent (or any ancestor) is a watched container
-      var ancestor = node.parent;
-      while (ancestor) {
-        if (watchedContainerIds.indexOf(ancestor.id) !== -1) {
-          shouldAdd = true;
-          break;
-        }
-        ancestor = ancestor.parent;
+    // Remove deleted nodes from association
+    if (change.type === 'DELETE') {
+      var wasAssociated = associatedNodeIds.indexOf(change.id) !== -1;
+      var wasWatched = watchedContainerIds.indexOf(change.id) !== -1;
+      if (wasAssociated || wasWatched) {
+        associatedNodeIds = associatedNodeIds.filter(function(id) { return id !== change.id; });
+        watchedContainerIds = watchedContainerIds.filter(function(id) { return id !== change.id; });
+        changed = true;
       }
+      return;
     }
 
-    if (shouldAdd && associatedNodeIds.indexOf(node.id) === -1) {
-      associatedNodeIds.push(node.id);
-      added = true;
+    // Auto-add newly created nodes
+    if (change.type === 'CREATE') {
+      var node = figma.getNodeById(change.id);
+      if (!node) return;
+      if (associatedNodeIds.indexOf(node.id) !== -1) return;
+      if (watchAll || isInsideWatchedContainer(node)) {
+        associatedNodeIds.push(node.id);
+        changed = true;
+      }
+      return;
+    }
+
+    // Catch nodes dragged into a watched container (parent change)
+    if (change.type === 'PROPERTY_CHANGE') {
+      if (!change.changedProperties || change.changedProperties.indexOf('parent') === -1) return;
+      var node = figma.getNodeById(change.id);
+      if (!node) return;
+      if (associatedNodeIds.indexOf(node.id) !== -1) return;
+      if (watchAll || isInsideWatchedContainer(node)) {
+        associatedNodeIds.push(node.id);
+        changed = true;
+      }
     }
   });
 
-  if (added) {
+  if (changed) {
     figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
   }
 });
@@ -245,23 +266,25 @@ figma.ui.onmessage = function(msg) {
 
   if (msg.type === 'hover_node') {
     var node = figma.getNodeById(msg.id);
-    if (node) {
-      savedSelection = figma.currentPage.selection.slice();
-      figma.currentPage.selection = [node];
+    if (node && node.removed !== true) {
+      savedSelection = figma.currentPage.selection.filter(function(n) { return !n.removed; });
+      try { figma.currentPage.selection = [node]; } catch(e) {}
     }
     return;
   }
 
   if (msg.type === 'unhover_node') {
-    figma.currentPage.selection = savedSelection;
+    try { figma.currentPage.selection = savedSelection.filter(function(n) { return !n.removed; }); } catch(e) {}
     return;
   }
 
   if (msg.type === 'focus_node') {
     var node = figma.getNodeById(msg.id);
-    if (node) {
-      figma.currentPage.selection = [node];
-      figma.viewport.scrollAndZoomIntoView([node]);
+    if (node && node.removed !== true) {
+      try {
+        figma.currentPage.selection = [node];
+        figma.viewport.scrollAndZoomIntoView([node]);
+      } catch(e) {}
     }
     return;
   }
