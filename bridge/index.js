@@ -3,7 +3,10 @@ import { createWsServer } from './ws-server.js';
 import { buildTools } from './mcp-tools.js';
 import { diffCanvas } from './canvas-diff.js';
 
-const wsServer = createWsServer(3100);
+const WS_PORT = parseInt(process.env.WS_PORT ?? '3100', 10);
+const HTTP_PORT = parseInt(process.env.HTTP_PORT ?? '3101', 10);
+
+const wsServer = createWsServer(WS_PORT);
 const stateStore = {
   last: null,
   pendingMessage: null,
@@ -74,8 +77,8 @@ const httpServer = http.createServer(async (req, res) => {
   }
 });
 
-httpServer.listen(3101, () => {
-  console.error('[bridge] HTTP API listening on http://localhost:3101');
+httpServer.listen(HTTP_PORT, () => {
+  console.error(`[bridge] HTTP API listening on http://0.0.0.0:${HTTP_PORT}`);
 });
 
-console.error('[bridge] WebSocket server listening on ws://localhost:3100');
+console.error(`[bridge] WebSocket server listening on ws://0.0.0.0:${WS_PORT}`);

@@ -15,7 +15,7 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
-      height: 400px;
+      height: 420px;
     }
 
     /* ---- Status bar ---- */
@@ -25,6 +25,46 @@
       gap: 7px;
       flex-shrink: 0;
     }
+    .gear-btn {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: #555;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .gear-btn:hover { color: #aaa; }
+    .url-row {
+      display: none;
+      gap: 5px;
+      flex-shrink: 0;
+    }
+    .url-row.open { display: flex; }
+    .url-input {
+      flex: 1;
+      background: #252525;
+      color: #d4d4d4;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 4px 7px;
+      font-size: 11px;
+      font-family: monospace;
+      outline: none;
+    }
+    .url-input:focus { border-color: #4a90d9; }
+    .url-save-btn {
+      background: #3a3a3a;
+      color: #ccc;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .url-save-btn:hover { background: #4a4a4a; }
     .dot {
       width: 8px; height: 8px;
       border-radius: 50%;
@@ -231,7 +271,12 @@
   <!-- Status -->
   <div class="status-bar">
     <div class="dot" id="dot"></div>
-    <span class="status-text" id="status-text">Disconnected</span>
+    <span class="status-text" id="status-text">Connecting…</span>
+    <button type="button" class="gear-btn" id="gear-btn" title="Configure bridge URL">⚙</button>
+  </div>
+  <div class="url-row" id="url-row">
+    <input type="text" class="url-input" id="url-input" placeholder="ws://localhost:3100" spellcheck="false" />
+    <button type="button" class="url-save-btn" id="url-save-btn">Save</button>
   </div>
 
   <!-- Canvas Context -->
@@ -267,10 +312,12 @@
   </div>
 
   <script>
-    const WS_URL = 'ws://localhost:3100';
-
     const dot = document.getElementById('dot');
     const statusText = document.getElementById('status-text');
+    const gearBtn = document.getElementById('gear-btn');
+    const urlRow = document.getElementById('url-row');
+    const urlInput = document.getElementById('url-input');
+    const urlSaveBtn = document.getElementById('url-save-btn');
     const chevron = document.getElementById('chevron');
     const contextBody = document.getElementById('context-body');
     const badge = document.getElementById('badge');
@@ -283,13 +330,32 @@
 
     let ws = null;
     let connected = false;
+    let bridgeUrl = null; // set by init message from code.js
     let selectionCount = 0;
     let associated = [];
     let pendingText = '';
 
-    // ---- WebSocket ----
+    // ---- Gear / URL config ----
+    gearBtn.addEventListener('click', () => urlRow.classList.toggle('open'));
+
+    urlSaveBtn.addEventListener('click', () => {
+      const url = urlInput.value.trim();
+      if (!url) return;
+      bridgeUrl = url;
+      urlRow.classList.remove('open');
+      parent.postMessage({ pluginMessage: { type: 'save_bridge_url', url } }, '*');
+      // Reconnect with new URL
+      if (ws) ws.close();
+    });
+
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') urlSaveBtn.click();
+    });
+
+    // ---- WebSocket — only called after bridgeUrl is set ----
     function connect() {
-      ws = new WebSocket(WS_URL);
+      if (!bridgeUrl) return;
+      ws = new WebSocket(bridgeUrl);
 
       ws.onopen = () => {
         connected = true;
@@ -445,6 +511,14 @@
         return;
       }
 
+      // Init: code.js sends saved bridge URL on startup
+      if (msg.type === 'init') {
+        bridgeUrl = msg.bridgeUrl;
+        urlInput.value = bridgeUrl;
+        connect();
+        return;
+      }
+
       // Snapshot ready — forward as user_message event to bridge
       if (msg.type === 'snapshot_for_send') {
         sendToBridge({ event: 'user_message', text: pendingText, payload: msg.payload });
@@ -476,11 +550,6 @@
       }
     };
 
-    // Enable chat input once connected
-    const origOnopen = null;
-    const enableChat = () => { chatInput.disabled = false; };
-    // Enable immediately if already connected on load
-    setTimeout(() => { if (connected) enableChat(); }, 100);
   </script>
 </body>
 </html>

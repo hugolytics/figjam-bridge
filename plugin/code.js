@@ -2,7 +2,15 @@
 // Runs in Figma's plugin sandbox — no browser APIs.
 // WebSocket lives in ui.html. This file only touches the Figma scene.
 
-figma.showUI(__html__, { width: 240, height: 400 });
+figma.showUI(__html__, { width: 240, height: 420 });
+
+// Load saved bridge URL and send to UI before anything else
+figma.clientStorage.getAsync('bridgeUrl').then(function(saved) {
+  figma.ui.postMessage({
+    type: 'init',
+    bridgeUrl: saved || 'ws://localhost:3100',
+  });
+});
 
 var associatedNodeIds = [];   // ordered list of node IDs in context
 var watchedContainerIds = []; // containers whose new children are auto-added
@@ -355,6 +363,11 @@ figma.ui.onmessage = function(msg) {
   if (msg.type === 'update_d2') {
     d2Source = msg.d2_source || '';
     renderD2(d2Source, msg.id);
+    return;
+  }
+
+  if (msg.type === 'save_bridge_url') {
+    figma.clientStorage.setAsync('bridgeUrl', msg.url);
     return;
   }
 

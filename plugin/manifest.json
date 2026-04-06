@@ -6,7 +6,7 @@
   "ui": "ui.html",
   "editorType": ["figjam"],
   "networkAccess": {
-    "allowedDomains": ["none"],
-    "devAllowedDomains": ["ws://localhost:3100"]
+    "allowedDomains": ["*"],
+    "reasoning": "Connects to a user-configured bridge server that can be hosted locally or in the cloud"
   }
 }

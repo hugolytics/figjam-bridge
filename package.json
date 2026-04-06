@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env bridge/index.js",
+    "start:plain": "node bridge/index.js",
     "test": "node --experimental-vm-modules node_modules/.bin/jest"
   },
   "dependencies": {
