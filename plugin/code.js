@@ -189,17 +189,22 @@ figma.ui.onmessage = function(msg) {
       figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } });
       return;
     }
-    var sticky = figma.createSticky();
-    sticky.text.characters = msg.text || '';
-    sticky.x = msg.x || 0;
-    sticky.y = msg.y || 0;
-    if (msg.color) {
-      var colorMap = { blue: { r: 0.44, g: 0.64, b: 1 }, yellow: { r: 1, g: 0.93, b: 0.44 }, green: { r: 0.44, g: 0.93, b: 0.6 }, pink: { r: 1, g: 0.44, b: 0.73 } };
-      var c = colorMap[msg.color];
-      if (c) sticky.fills = [{ type: 'SOLID', color: c }];
-    }
-    frame.appendChild(sticky);
-    figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: sticky.id } });
+    Promise.all([
+      figma.loadFontAsync({ family: 'Inter', style: 'Medium' }),
+      figma.loadFontAsync({ family: 'Inter', style: 'Regular' }),
+    ]).then(function() {
+      var sticky = figma.createSticky();
+      sticky.text.characters = msg.text || '';
+      sticky.x = msg.x || 0;
+      sticky.y = msg.y || 0;
+      if (msg.color) {
+        var colorMap = { blue: { r: 0.44, g: 0.64, b: 1 }, yellow: { r: 1, g: 0.93, b: 0.44 }, green: { r: 0.44, g: 0.93, b: 0.6 }, pink: { r: 1, g: 0.44, b: 0.73 } };
+        var c = colorMap[msg.color];
+        if (c) sticky.fills = [{ type: 'SOLID', color: c }];
+      }
+      frame.appendChild(sticky);
+      figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: sticky.id } });
+    });
     return;
   }
 
