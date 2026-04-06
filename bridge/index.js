@@ -1,48 +1,33 @@
 import { createWsServer } from './ws-server.js';
 import { startMcpServer, buildTools } from './mcp-tools.js';
-import { buildClaudeHandler, createOpenRouterClient } from './claude-client.js';
 import { diffCanvas } from './canvas-diff.js';
 
 const wsServer = createWsServer(3100);
-const stateStore = { last: null };
+const stateStore = {
+  last: null,
+  pendingMessage: null,  // { text, payload, timestamp } — set by plugin "Send to Claude"
+};
 const tools = buildTools(wsServer, stateStore);
 
-const client = createOpenRouterClient(process.env.OPENROUTER_API_KEY, process.env.OPENROUTER_MODEL);
-const handleAskClaude = buildClaudeHandler(client);
-
-// Handle plugin-initiated "Ask Claude"
 wsServer.wss.on('connection', ws => {
   console.error('[bridge] plugin connected');
   ws.on('message', async raw => {
     const msg = JSON.parse(raw.toString());
-    console.error('[bridge] message received:', JSON.stringify(msg).slice(0, 200));
-    if (msg.event === 'ask_claude') {
-      try {
-        // Enrich payload with diff from last known state, then update stateStore
-        const diff = diffCanvas(stateStore.last, msg.payload);
-        stateStore.last = msg.payload;
-        const enrichedPayload = { ...msg.payload, diff_from_last: diff };
 
-        const result = await handleAskClaude(enrichedPayload);
-        // Place Claude's message as a sticky in the top-right corner of the frame
-        const { nodes } = msg.payload;
-        const maxX = nodes.length ? Math.max(...nodes.map(n => n.x + n.w)) : 0;
-        await tools.canvas_write_sticky.execute({
-          text: `Claude: ${result.message}`,
-          x: maxX + 40,
-          y: 0,
-          color: 'blue',
-        });
-        // Execute any additional writes Claude requested
-        for (const write of result.writes ?? []) {
-          if (tools[write.tool]) {
-            await tools[write.tool].execute(write.args);
-          }
-        }
-      } catch (err) {
-        console.error('[bridge] ask_claude error:', err.message);
-      }
+    // User clicked "Send to Claude" in the plugin
+    if (msg.event === 'user_message') {
+      const diff = diffCanvas(stateStore.last, msg.payload);
+      stateStore.last = msg.payload;
+      stateStore.pendingMessage = {
+        text: msg.text,
+        payload: { ...msg.payload, diff_from_last: diff },
+        timestamp: new Date().toISOString(),
+      };
+      console.error('[bridge] user_message stored:', msg.text?.slice(0, 80));
+      return;
     }
+
+    // All other messages are MCP tool responses — handled inside ws-server's pending map
   });
 });
 

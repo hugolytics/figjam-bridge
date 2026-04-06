@@ -1,100 +1,124 @@
 // plugin/code.js
-// Runs in Figma's plugin sandbox — no browser APIs (no WebSocket, fetch, setTimeout).
+// Runs in Figma's plugin sandbox — no browser APIs.
 // WebSocket lives in ui.html. This file only touches the Figma scene.
-// NOTE: avoid async/await in figma.ui.onmessage — use .then() chaining for reliability.
 
-figma.showUI(__html__, { width: 220, height: 280 });
+figma.showUI(__html__, { width: 240, height: 400 });
 
-var sessionFrameId = null;
+var associatedNodeIds = [];  // ordered list of node IDs in context
+var savedSelection = [];     // saved before hover-highlight, restored on unhover
 var d2Source = '';
+
+// ---- Node helpers ----
+
+function nodeIcon(node) {
+  switch (node.type) {
+    case 'FRAME':
+    case 'GROUP': return '▣';
+    case 'STICKY': return '◈';
+    case 'SHAPE_WITH_TEXT': return '◆';
+    case 'TEXT': return 'T';
+    case 'CONNECTOR': return '↔';
+    default: return '●';
+  }
+}
+
+function nodeLabel(node) {
+  var text = (node.characters) ||
+             (node.text && node.text.characters) ||
+             '';
+  text = text.replace(/\n/g, ' ').trim().slice(0, 40);
+  return text || node.name || node.type.toLowerCase();
+}
+
+// Recursively collect node + all descendant IDs
+function collectIds(node) {
+  var ids = [node.id];
+  if (node.children) {
+    node.children.forEach(function(child) {
+      ids = ids.concat(collectIds(child));
+    });
+  }
+  return ids;
+}
+
+function getAssociatedMeta() {
+  return associatedNodeIds.map(function(id) {
+    var node = figma.getNodeById(id);
+    if (!node) return null;
+    var bb = node.absoluteBoundingBox || { x: 0, y: 0, width: 100, height: 50 };
+    return {
+      id: id,
+      type: node.type.toLowerCase(),
+      label: nodeLabel(node),
+      icon: nodeIcon(node),
+      x: bb.x, y: bb.y, w: bb.width, h: bb.height,
+    };
+  }).filter(Boolean);
+}
 
 // ---- Spatial correlation ----
 function associateStrokesWithNodes(strokes, nodes, threshold) {
   threshold = threshold || 80;
   return strokes.map(function(stroke) {
     var sc = { x: stroke.bounds.x + stroke.bounds.w / 2, y: stroke.bounds.y + stroke.bounds.h / 2 };
-    var nearestId;
-    var minDist = Infinity;
-    for (var i = 0; i < nodes.length; i++) {
-      var node = nodes[i];
+    var nearestId, minDist = Infinity;
+    nodes.forEach(function(node) {
       var nc = { x: node.x + node.w / 2, y: node.y + node.h / 2 };
       var dist = Math.sqrt(Math.pow(sc.x - nc.x, 2) + Math.pow(sc.y - nc.y, 2));
       if (dist < threshold && dist < minDist) { minDist = dist; nearestId = node.id; }
-    }
+    });
     return nearestId ? Object.assign({}, stroke, { near_node_id: nearestId }) : stroke;
   });
 }
 
-// ---- Session frame ----
-function getSessionFrame() {
-  if (sessionFrameId) {
-    var node = figma.getNodeById(sessionFrameId);
-    if (node) return node;
-  }
-  return null;
-}
-
-function serializeCanvas() {
-  var frame = getSessionFrame();
-  if (!frame) return { nodes: [], edges: [], strokes: [] };
-
-  var nodes = [];
-  var edges = [];
-  var strokes = [];
-
-  frame.children.forEach(function(child) {
-    if (child.type === 'CONNECTOR') {
+// Serialize only associated nodes for MCP canvas_read
+function serializeAssociated() {
+  var nodes = [], edges = [], strokes = [];
+  associatedNodeIds.forEach(function(id) {
+    var node = figma.getNodeById(id);
+    if (!node) return;
+    var bb = node.absoluteBoundingBox || { x: 0, y: 0, width: 100, height: 50 };
+    if (node.type === 'CONNECTOR') {
       edges.push({
-        id: child.id,
-        from: child.connectorStart && child.connectorStart.endpointNodeId,
-        to: child.connectorEnd && child.connectorEnd.endpointNodeId,
-        label: child.text && child.text.characters,
+        id: node.id,
+        from: node.connectorStart && node.connectorStart.endpointNodeId,
+        to: node.connectorEnd && node.connectorEnd.endpointNodeId,
+        label: node.text && node.text.characters,
       });
-    } else if (child.type === 'VECTOR' || child.type === 'BOOLEAN_OPERATION') {
-      var b = child.absoluteBoundingBox || { x: 0, y: 0, width: 10, height: 10 };
-      strokes.push({ id: child.id, path: '', bounds: { x: b.x, y: b.y, w: b.width, h: b.height } });
+    } else if (node.type === 'VECTOR' || node.type === 'BOOLEAN_OPERATION') {
+      strokes.push({ id: node.id, path: '', bounds: { x: bb.x, y: bb.y, w: bb.width, h: bb.height } });
     } else {
-      var bb = child.absoluteBoundingBox || { x: 0, y: 0, width: 100, height: 50 };
       nodes.push({
-        id: child.id,
-        type: child.type.toLowerCase(),
-        text: child.characters || (child.text && child.text.characters) || '',
+        id: node.id,
+        type: node.type.toLowerCase(),
+        text: node.characters || (node.text && node.text.characters) || '',
+        name: node.name,
         x: bb.x, y: bb.y, w: bb.width, h: bb.height,
       });
     }
   });
-
   strokes = associateStrokesWithNodes(strokes, nodes, 80);
   return { nodes: nodes, edges: edges, strokes: strokes };
 }
 
-// ---- D2 rendering (V1: basic, no layout engine) ----
-function renderD2(source, frame, replyId) {
-  if (!frame) {
-    figma.ui.postMessage({ type: 'bridge_response', id: replyId, result: { ok: false, error: 'No frame' } });
-    return;
-  }
-
+// ---- D2 rendering (V1) ----
+function renderD2(source, replyId) {
   var lines = source.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
-  var nodeNames = {};
-  var edgeDefs = [];
-
+  var nodeNames = {}, edgeDefs = [];
   lines.forEach(function(line) {
-    var arrowMatch = line.match(/^(.+?)\s*->\s*(.+?)(?::\s*(.+))?$/);
-    if (arrowMatch) {
-      var from = arrowMatch[1].trim().replace(/['"]/g, '');
-      var to = arrowMatch[2].trim().replace(/['"]/g, '');
-      var label = arrowMatch[3] ? arrowMatch[3].trim() : '';
-      nodeNames[from] = true;
-      nodeNames[to] = true;
-      edgeDefs.push({ from: from, to: to, label: label });
+    var m = line.match(/^(.+?)\s*->\s*(.+?)(?::\s*(.+))?$/);
+    if (m) {
+      var from = m[1].trim().replace(/['"]/g, '');
+      var to = m[2].trim().replace(/['"]/g, '');
+      nodeNames[from] = true; nodeNames[to] = true;
+      edgeDefs.push({ from: from, to: to, label: m[3] ? m[3].trim() : '' });
     } else {
       nodeNames[line.replace(/['"]/g, '')] = true;
     }
   });
 
   var names = Object.keys(nodeNames);
-  var createdNodes = {};
+  var created = {};
   var promises = names.map(function(name, i) {
     return figma.loadFontAsync({ family: 'Inter', style: 'Regular' }).then(function() {
       var shape = figma.createShapeWithText();
@@ -102,74 +126,104 @@ function renderD2(source, frame, replyId) {
       shape.text.characters = name;
       shape.x = (i % 4) * 180;
       shape.y = Math.floor(i / 4) * 120;
-      frame.appendChild(shape);
-      createdNodes[name] = shape;
+      figma.currentPage.appendChild(shape);
+      created[name] = shape;
+      if (associatedNodeIds.indexOf(shape.id) === -1) associatedNodeIds.push(shape.id);
     });
   });
 
   Promise.all(promises).then(function() {
     edgeDefs.forEach(function(e) {
-      var fromNode = createdNodes[e.from];
-      var toNode = createdNodes[e.to];
-      if (!fromNode || !toNode) return;
+      var fn = created[e.from], tn = created[e.to];
+      if (!fn || !tn) return;
       var connector = figma.createConnector();
-      connector.connectorStart = { endpointNodeId: fromNode.id, magnet: 'AUTO' };
-      connector.connectorEnd = { endpointNodeId: toNode.id, magnet: 'AUTO' };
-      frame.appendChild(connector);
+      connector.connectorStart = { endpointNodeId: fn.id, magnet: 'AUTO' };
+      connector.connectorEnd = { endpointNodeId: tn.id, magnet: 'AUTO' };
+      figma.currentPage.appendChild(connector);
     });
     figma.ui.postMessage({ type: 'bridge_response', id: replyId, result: { ok: true } });
     figma.ui.postMessage({ type: 'd2_update', d2_source: source });
+    figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
   });
 }
 
+// ---- Selection change listener ----
+figma.on('selectionchange', function() {
+  var sel = figma.currentPage.selection;
+  figma.ui.postMessage({ type: 'selection_changed', count: sel.length });
+});
+
 // ---- UI message handler ----
 figma.ui.onmessage = function(msg) {
-  console.log('[code.js] received message:', msg.type);
 
-  // --- User actions ---
+  // --- Association management ---
 
-  if (msg.type === 'new_session') {
-    var date = new Date().toISOString().slice(0, 10);
-    var frame = figma.createFrame();
-    frame.name = '[Session — ' + date + ']';
-    frame.resize(1200, 800);
-    frame.x = figma.viewport.center.x - 600;
-    frame.y = figma.viewport.center.y - 400;
-    sessionFrameId = frame.id;
-    figma.viewport.scrollAndZoomIntoView([frame]);
-    console.log('[code.js] session created:', sessionFrameId);
+  if (msg.type === 'add_selection') {
+    var sel = figma.currentPage.selection;
+    if (sel.length === 0) return;
+    sel.forEach(function(node) {
+      collectIds(node).forEach(function(id) {
+        if (associatedNodeIds.indexOf(id) === -1) associatedNodeIds.push(id);
+      });
+    });
+    figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
     return;
   }
 
-  if (msg.type === 'ask_claude') {
-    console.log('[code.js] ask_claude: serializing canvas');
-    var payload = serializeCanvas();
-    var frame = getSessionFrame();
-    if (frame) {
-      frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } }).then(function(bytes) {
-        console.log('[code.js] ask_claude: PNG exported, sending payload');
-        figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: bytes });
-      }).catch(function(err) {
-        console.error('[code.js] ask_claude exportAsync error:', err);
-        figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: null });
-      });
-    } else {
-      console.log('[code.js] ask_claude: no session frame, sending without PNG');
-      figma.ui.postMessage({ type: 'ask_claude_payload', payload: payload, pngBytes: null });
+  if (msg.type === 'remove_node') {
+    associatedNodeIds = associatedNodeIds.filter(function(id) { return id !== msg.id; });
+    figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
+    return;
+  }
+
+  if (msg.type === 'get_associated') {
+    figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
+    return;
+  }
+
+  // --- Hover / focus ---
+
+  if (msg.type === 'hover_node') {
+    var node = figma.getNodeById(msg.id);
+    if (node) {
+      savedSelection = figma.currentPage.selection.slice();
+      figma.currentPage.selection = [node];
     }
     return;
   }
 
-  // --- Bridge commands forwarded from ui.html ---
+  if (msg.type === 'unhover_node') {
+    figma.currentPage.selection = savedSelection;
+    return;
+  }
+
+  if (msg.type === 'focus_node') {
+    var node = figma.getNodeById(msg.id);
+    if (node) {
+      figma.currentPage.selection = [node];
+      figma.viewport.scrollAndZoomIntoView([node]);
+    }
+    return;
+  }
+
+  // --- Send message snapshot (user clicked Send in chat) ---
+
+  if (msg.type === 'get_snapshot_for_send') {
+    var payload = serializeAssociated();
+    // No PNG for send — keep payload lean, MCP canvas_read can fetch PNG separately
+    figma.ui.postMessage({ type: 'snapshot_for_send', payload: payload });
+    return;
+  }
+
+  // --- Bridge commands forwarded from ui.html (MCP tools) ---
 
   if (msg.type === 'get_snapshot') {
-    var payload = serializeCanvas();
-    var frame = getSessionFrame();
-    if (frame) {
-      frame.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } }).then(function(bytes) {
+    var payload = serializeAssociated();
+    var associated = associatedNodeIds.map(function(id) { return figma.getNodeById(id); }).filter(Boolean);
+    if (associated.length > 0) {
+      associated[0].exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.5 } }).then(function(bytes) {
         figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: bytes });
-      }).catch(function(err) {
-        console.error('[code.js] get_snapshot exportAsync error:', err);
+      }).catch(function() {
         figma.ui.postMessage({ type: 'snapshot_result', id: msg.id, payload: payload, pngBytes: null });
       });
     } else {
@@ -184,11 +238,6 @@ figma.ui.onmessage = function(msg) {
   }
 
   if (msg.type === 'create_sticky') {
-    var frame = getSessionFrame();
-    if (!frame) {
-      figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } });
-      return;
-    }
     Promise.all([
       figma.loadFontAsync({ family: 'Inter', style: 'Medium' }),
       figma.loadFontAsync({ family: 'Inter', style: 'Regular' }),
@@ -198,28 +247,23 @@ figma.ui.onmessage = function(msg) {
       sticky.x = msg.x || 0;
       sticky.y = msg.y || 0;
       if (msg.color) {
-        var colorMap = { blue: { r: 0.44, g: 0.64, b: 1 }, yellow: { r: 1, g: 0.93, b: 0.44 }, green: { r: 0.44, g: 0.93, b: 0.6 }, pink: { r: 1, g: 0.44, b: 0.73 } };
-        var c = colorMap[msg.color];
+        var map = { blue: { r: 0.44, g: 0.64, b: 1 }, yellow: { r: 1, g: 0.93, b: 0.44 }, green: { r: 0.44, g: 0.93, b: 0.6 }, pink: { r: 1, g: 0.44, b: 0.73 } };
+        var c = map[msg.color];
         if (c) sticky.fills = [{ type: 'SOLID', color: c }];
       }
-      frame.appendChild(sticky);
+      figma.currentPage.appendChild(sticky);
       figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: sticky.id } });
     });
     return;
   }
 
   if (msg.type === 'create_text') {
-    var frame = getSessionFrame();
-    if (!frame) {
-      figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'No active session' } });
-      return;
-    }
     figma.loadFontAsync({ family: 'Inter', style: 'Regular' }).then(function() {
       var text = figma.createText();
       text.characters = msg.text || '';
       text.x = msg.x || 0;
       text.y = msg.y || 0;
-      frame.appendChild(text);
+      figma.currentPage.appendChild(text);
       figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { node_id: text.id } });
     });
     return;
@@ -227,9 +271,11 @@ figma.ui.onmessage = function(msg) {
 
   if (msg.type === 'update_d2') {
     d2Source = msg.d2_source || '';
-    renderD2(d2Source, getSessionFrame(), msg.id);
+    renderD2(d2Source, msg.id);
     return;
   }
 
-  figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'Unknown command: ' + msg.type } });
+  if (msg.id) {
+    figma.ui.postMessage({ type: 'bridge_response', id: msg.id, result: { error: 'Unknown command: ' + msg.type } });
+  }
 };

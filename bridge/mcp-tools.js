@@ -11,7 +11,9 @@ export function buildTools(wsServer, stateStore) {
         const payload = await wsServer.send({ type: 'get_snapshot' });
         const diff = diffCanvas(stateStore.last, payload);
         stateStore.last = payload;
-        return { ...payload, diff };
+        const pending = stateStore.pendingMessage;
+        stateStore.pendingMessage = null;  // consume once read
+        return { ...payload, diff, user_message: pending ?? null };
       },
     },
     canvas_write_sticky: {

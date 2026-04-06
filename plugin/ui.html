@@ -3,103 +3,276 @@
 <head>
   <meta charset="utf-8" />
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
     body {
       font-family: -apple-system, sans-serif;
       font-size: 12px;
       margin: 0;
-      padding: 12px;
+      padding: 10px;
       background: #1e1e1e;
       color: #d4d4d4;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      height: 400px;
     }
-    .status {
+
+    /* ---- Status bar ---- */
+    .status-bar {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #e05c5c;
+      gap: 7px;
       flex-shrink: 0;
     }
-    .dot.connected { background: #5ce06a; }
-    button {
-      width: 100%;
-      padding: 8px;
-      margin-bottom: 8px;
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #c0392b;
+      flex-shrink: 0;
+    }
+    .dot.connected { background: #27ae60; }
+    .status-text { color: #888; }
+
+    /* ---- Context panel ---- */
+    .context-panel {
+      border: 1px solid #333;
+      border-radius: 5px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .context-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 9px;
+      cursor: pointer;
+      user-select: none;
+      background: #252525;
+    }
+    .context-header:hover { background: #2d2d2d; }
+    .context-header-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+      color: #ccc;
+    }
+    .chevron {
+      font-size: 9px;
+      color: #666;
+      transition: transform 0.15s;
+      display: inline-block;
+    }
+    .chevron.open { transform: rotate(90deg); }
+    .badge {
       background: #3a3a3a;
+      color: #aaa;
+      border-radius: 9px;
+      padding: 1px 6px;
+      font-size: 10px;
+    }
+
+    .context-body {
+      display: none;
+      flex-direction: column;
+    }
+    .context-body.open { display: flex; }
+
+    .item-list {
+      max-height: 152px;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .item-list::-webkit-scrollbar { width: 4px; }
+    .item-list::-webkit-scrollbar-track { background: transparent; }
+    .item-list::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+
+    .item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px;
+      cursor: default;
+    }
+    .item:hover { background: #2a2a2a; }
+
+    .item input[type="checkbox"] {
+      width: 13px; height: 13px;
+      margin: 0;
+      cursor: pointer;
+      accent-color: #4a90d9;
+      flex-shrink: 0;
+    }
+    .item-icon {
+      width: 16px;
+      text-align: center;
+      color: #777;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .item-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #ccc;
+      cursor: pointer;
+    }
+    .item-label:hover { color: #fff; text-decoration: underline; }
+
+    .empty-state {
+      padding: 10px 9px;
+      color: #555;
+      font-style: italic;
+      font-size: 11px;
+    }
+
+    .add-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 9px;
+      border-top: 1px solid #2e2e2e;
+      cursor: pointer;
+      color: #4a90d9;
+      font-size: 11px;
+      background: none;
+      border-left: none; border-right: none; border-bottom: none;
+      width: 100%;
+      text-align: left;
+    }
+    .add-btn:hover { background: #252525; color: #6baee8; }
+    .add-btn:disabled { color: #444; cursor: default; }
+    .add-btn:disabled:hover { background: none; }
+
+    /* ---- Divider ---- */
+    .divider {
+      height: 1px;
+      background: #2e2e2e;
+      flex-shrink: 0;
+    }
+
+    /* ---- Chat ---- */
+    .chat-area {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+      min-height: 0;
+    }
+    textarea {
+      flex: 1;
+      min-height: 60px;
+      background: #252525;
       color: #d4d4d4;
-      border: 1px solid #555;
+      border: 1px solid #383838;
+      border-radius: 4px;
+      padding: 7px 8px;
+      font-family: inherit;
+      font-size: 12px;
+      resize: none;
+      outline: none;
+      line-height: 1.45;
+    }
+    textarea:focus { border-color: #4a90d9; }
+    textarea::placeholder { color: #444; }
+    textarea:disabled { opacity: 0.5; }
+
+    .send-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px;
+      background: #4a90d9;
+      color: #fff;
+      border: none;
       border-radius: 4px;
       cursor: pointer;
       font-size: 12px;
+      font-weight: 500;
+      flex-shrink: 0;
     }
-    button:hover { background: #4a4a4a; }
-    button:disabled { opacity: 0.4; cursor: default; }
-    label {
-      display: block;
-      margin-bottom: 4px;
-      color: #888;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    textarea {
-      width: 100%;
-      height: 120px;
-      background: #2d2d2d;
-      color: #d4d4d4;
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 6px;
-      font-family: monospace;
-      font-size: 11px;
-      resize: vertical;
-      box-sizing: border-box;
-    }
+    .send-btn:hover { background: #5a9fe8; }
+    .send-btn:disabled { background: #2e2e2e; color: #555; cursor: default; }
   </style>
 </head>
 <body>
-  <div class="status">
+  <!-- Status -->
+  <div class="status-bar">
     <div class="dot" id="dot"></div>
-    <span id="status-text">Disconnected</span>
+    <span class="status-text" id="status-text">Disconnected</span>
   </div>
-  <button id="btn-session">New Session</button>
-  <button id="btn-ask" disabled>Ask Claude</button>
-  <label>D2 Source</label>
-  <textarea id="d2-source" readonly placeholder="No D2 yet"></textarea>
+
+  <!-- Canvas Context -->
+  <div class="context-panel">
+    <div class="context-header" id="context-header">
+      <div class="context-header-left">
+        <span class="chevron open" id="chevron">&#9658;</span>
+        Canvas Context
+      </div>
+      <span class="badge" id="badge">0</span>
+    </div>
+    <div class="context-body open" id="context-body">
+      <div class="item-list" id="item-list">
+        <div class="empty-state">Select nodes on the canvas, then click Add.</div>
+      </div>
+      <button type="button" class="add-btn" id="add-btn" disabled>+ Add Selection</button>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Chat -->
+  <div class="chat-area">
+    <textarea id="chat-input" placeholder="Tell Claude what to look at…" disabled></textarea>
+    <button class="send-btn" id="send-btn" disabled>Send to Claude ↗</button>
+  </div>
 
   <script>
     const WS_URL = 'ws://localhost:3100';
+
     const dot = document.getElementById('dot');
     const statusText = document.getElementById('status-text');
-    const btnAsk = document.getElementById('btn-ask');
-    const d2Area = document.getElementById('d2-source');
+    const chevron = document.getElementById('chevron');
+    const contextBody = document.getElementById('context-body');
+    const badge = document.getElementById('badge');
+    const itemList = document.getElementById('item-list');
+    const addBtn = document.getElementById('add-btn');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send-btn');
 
     let ws = null;
+    let connected = false;
+    let selectionCount = 0;
+    let associated = [];
+    let pendingText = '';
 
     // ---- WebSocket ----
     function connect() {
       ws = new WebSocket(WS_URL);
 
       ws.onopen = () => {
+        connected = true;
         dot.className = 'dot connected';
         statusText.textContent = 'Connected';
-        btnAsk.disabled = false;
+        updateSendBtn();
+        // Request current state
+        parent.postMessage({ pluginMessage: { type: 'get_associated' } }, '*');
       };
 
       ws.onclose = () => {
+        connected = false;
         dot.className = 'dot';
         statusText.textContent = 'Disconnected';
-        btnAsk.disabled = true;
+        updateSendBtn();
         setTimeout(connect, 3000);
       };
 
       ws.onerror = () => ws.close();
 
-      // Bridge → plugin: forward command to code.js
+      // Bridge → plugin: forward MCP commands to code.js
       ws.onmessage = (event) => {
         const cmd = JSON.parse(event.data);
         parent.postMessage({ pluginMessage: cmd }, '*');
@@ -115,22 +288,133 @@
 
     function bytesToBase64(bytes) {
       const arr = new Uint8Array(bytes);
-      let binary = '';
-      for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-      return btoa(binary);
+      let bin = '';
+      for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+      return btoa(bin);
     }
 
-    // ---- Plugin → UI messages from code.js ----
+    // ---- Context accordion ----
+    document.getElementById('context-header').addEventListener('click', () => {
+      const isOpen = contextBody.classList.toggle('open');
+      chevron.classList.toggle('open', isOpen);
+    });
+
+    // ---- Render item list ----
+    function renderList() {
+      badge.textContent = associated.length;
+      if (associated.length === 0) {
+        itemList.innerHTML = '<div class="empty-state">Select nodes on the canvas, then click Add.</div>';
+        return;
+      }
+      itemList.innerHTML = '';
+      associated.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'item';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.title = 'Remove from context';
+
+        const icon = document.createElement('span');
+        icon.className = 'item-icon';
+        icon.textContent = item.icon;
+
+        const label = document.createElement('span');
+        label.className = 'item-label';
+        label.textContent = item.label;
+        label.title = `${item.type}: ${item.label} — click to focus`;
+
+        // Hover: highlight on canvas
+        row.addEventListener('mouseenter', () => {
+          parent.postMessage({ pluginMessage: { type: 'hover_node', id: item.id } }, '*');
+        });
+        row.addEventListener('mouseleave', () => {
+          parent.postMessage({ pluginMessage: { type: 'unhover_node' } }, '*');
+        });
+
+        // Click label: zoom to node
+        label.addEventListener('click', (e) => {
+          e.stopPropagation();
+          parent.postMessage({ pluginMessage: { type: 'focus_node', id: item.id } }, '*');
+        });
+
+        // Uncheck: remove from context
+        cb.addEventListener('change', () => {
+          parent.postMessage({ pluginMessage: { type: 'remove_node', id: item.id } }, '*');
+        });
+
+        row.appendChild(cb);
+        row.appendChild(icon);
+        row.appendChild(label);
+        itemList.appendChild(row);
+      });
+    }
+
+    // ---- Add selection ----
+    addBtn.addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'add_selection' } }, '*');
+    });
+
+    // ---- Send ----
+    function updateSendBtn() {
+      sendBtn.disabled = !connected || chatInput.value.trim() === '';
+    }
+
+    chatInput.addEventListener('input', updateSendBtn);
+
+    sendBtn.addEventListener('click', () => {
+      const text = chatInput.value.trim();
+      if (!text || !connected) return;
+      pendingText = text;
+      chatInput.disabled = true;
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending…';
+      // Ask code.js for a snapshot of associated nodes
+      parent.postMessage({ pluginMessage: { type: 'get_snapshot_for_send' } }, '*');
+    });
+
+    // ---- Messages from code.js ----
     window.onmessage = ({ data: { pluginMessage: msg } }) => {
       if (!msg) return;
 
-      // Generic bridge response (create_sticky, create_text, get_d2, update_d2, etc.)
+      if (msg.type === 'selection_changed') {
+        selectionCount = msg.count;
+        addBtn.disabled = msg.count === 0;
+        addBtn.textContent = msg.count > 0
+          ? `+ Add Selection (${msg.count} selected)`
+          : '+ Add Selection';
+        return;
+      }
+
+      if (msg.type === 'associated_updated') {
+        associated = msg.items;
+        renderList();
+        // Open panel if items were just added
+        if (associated.length > 0 && !contextBody.classList.contains('open')) {
+          contextBody.classList.add('open');
+          chevron.classList.add('open');
+        }
+        return;
+      }
+
+      // Snapshot ready — forward as user_message event to bridge
+      if (msg.type === 'snapshot_for_send') {
+        sendToBridge({ event: 'user_message', text: pendingText, payload: msg.payload });
+        pendingText = '';
+        chatInput.value = '';
+        chatInput.disabled = false;
+        sendBtn.textContent = 'Send to Claude ↗';
+        updateSendBtn();
+        return;
+      }
+
+      // Bridge response for MCP tool calls
       if (msg.type === 'bridge_response') {
         sendToBridge({ id: msg.id, result: msg.result });
         return;
       }
 
-      // Snapshot response (get_snapshot) — needs PNG bytes → base64
       if (msg.type === 'snapshot_result') {
         const payload = Object.assign({}, msg.payload, {
           snapshot_png: msg.pngBytes ? bytesToBase64(msg.pngBytes) : '',
@@ -139,30 +423,17 @@
         return;
       }
 
-      // Ask Claude response — send as event to bridge
-      if (msg.type === 'ask_claude_payload') {
-        const payload = Object.assign({}, msg.payload, {
-          snapshot_png: msg.pngBytes ? bytesToBase64(msg.pngBytes) : '',
-        });
-        sendToBridge({ event: 'ask_claude', payload });
-        return;
-      }
-
-      // D2 textarea update
       if (msg.type === 'd2_update') {
-        d2Area.value = msg.d2_source;
+        // could show in a collapsed section later
         return;
       }
     };
 
-    // ---- Button handlers ----
-    document.getElementById('btn-session').onclick = () => {
-      parent.postMessage({ pluginMessage: { type: 'new_session' } }, '*');
-    };
-
-    document.getElementById('btn-ask').onclick = () => {
-      parent.postMessage({ pluginMessage: { type: 'ask_claude' } }, '*');
-    };
+    // Enable chat input once connected
+    const origOnopen = null;
+    const enableChat = () => { chatInput.disabled = false; };
+    // Enable immediately if already connected on load
+    setTimeout(() => { if (connected) enableChat(); }, 100);
   </script>
 </body>
 </html>
