@@ -47,8 +47,8 @@
       justify-content: space-between;
       padding: 7px 9px;
       cursor: pointer;
-      user-select: none;
       -webkit-user-select: none;
+      user-select: none;
       background: #252525;
     }
     .context-header:hover { background: #2d2d2d; }
@@ -295,8 +295,8 @@
         connected = true;
         dot.className = 'dot connected';
         statusText.textContent = 'Connected';
+        chatInput.disabled = false;
         updateSendBtn();
-        // Request current state
         parent.postMessage({ pluginMessage: { type: 'get_associated' } }, '*');
       };
 
@@ -304,6 +304,7 @@
         connected = false;
         dot.className = 'dot';
         statusText.textContent = 'Disconnected';
+        chatInput.disabled = true;
         updateSendBtn();
         setTimeout(connect, 3000);
       };
