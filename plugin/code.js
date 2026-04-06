@@ -4,8 +4,10 @@
 
 figma.showUI(__html__, { width: 240, height: 400 });
 
-var associatedNodeIds = [];  // ordered list of node IDs in context
-var savedSelection = [];     // saved before hover-highlight, restored on unhover
+var associatedNodeIds = [];   // ordered list of node IDs in context
+var watchedContainerIds = []; // containers whose new children are auto-added
+var watchAll = false;         // when true, auto-add every new node on the page
+var savedSelection = [];      // saved before hover-highlight, restored on unhover
 var d2Source = '';
 
 // ---- Node helpers ----
@@ -153,6 +155,41 @@ figma.on('selectionchange', function() {
   figma.ui.postMessage({ type: 'selection_changed', count: sel.length });
 });
 
+// ---- Document change listener — auto-add children of watched containers ----
+figma.on('documentchange', function(event) {
+  var added = false;
+  event.documentChanges.forEach(function(change) {
+    if (change.type !== 'CREATE') return;
+    var node = figma.getNodeById(change.id);
+    if (!node) return;
+
+    var shouldAdd = false;
+
+    if (watchAll) {
+      shouldAdd = true;
+    } else if (node.parent) {
+      // Auto-add if parent (or any ancestor) is a watched container
+      var ancestor = node.parent;
+      while (ancestor) {
+        if (watchedContainerIds.indexOf(ancestor.id) !== -1) {
+          shouldAdd = true;
+          break;
+        }
+        ancestor = ancestor.parent;
+      }
+    }
+
+    if (shouldAdd && associatedNodeIds.indexOf(node.id) === -1) {
+      associatedNodeIds.push(node.id);
+      added = true;
+    }
+  });
+
+  if (added) {
+    figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
+  }
+});
+
 // ---- UI message handler ----
 figma.ui.onmessage = function(msg) {
 
@@ -162,6 +199,10 @@ figma.ui.onmessage = function(msg) {
     var sel = figma.currentPage.selection;
     if (sel.length === 0) return;
     sel.forEach(function(node) {
+      // Track containers for live child updates
+      if (node.type === 'FRAME' || node.type === 'GROUP' || node.type === 'SECTION') {
+        if (watchedContainerIds.indexOf(node.id) === -1) watchedContainerIds.push(node.id);
+      }
       collectIds(node).forEach(function(id) {
         if (associatedNodeIds.indexOf(id) === -1) associatedNodeIds.push(id);
       });
@@ -170,8 +211,27 @@ figma.ui.onmessage = function(msg) {
     return;
   }
 
+  if (msg.type === 'add_all') {
+    figma.currentPage.children.forEach(function(node) {
+      if (node.type === 'FRAME' || node.type === 'GROUP' || node.type === 'SECTION') {
+        if (watchedContainerIds.indexOf(node.id) === -1) watchedContainerIds.push(node.id);
+      }
+      collectIds(node).forEach(function(id) {
+        if (associatedNodeIds.indexOf(id) === -1) associatedNodeIds.push(id);
+      });
+    });
+    figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
+    return;
+  }
+
+  if (msg.type === 'set_watch_all') {
+    watchAll = msg.enabled;
+    return;
+  }
+
   if (msg.type === 'remove_node') {
     associatedNodeIds = associatedNodeIds.filter(function(id) { return id !== msg.id; });
+    watchedContainerIds = watchedContainerIds.filter(function(id) { return id !== msg.id; });
     figma.ui.postMessage({ type: 'associated_updated', items: getAssociatedMeta() });
     return;
   }

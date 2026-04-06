@@ -48,6 +48,7 @@
       padding: 7px 9px;
       cursor: pointer;
       user-select: none;
+      -webkit-user-select: none;
       background: #252525;
     }
     .context-header:hover { background: #2d2d2d; }
@@ -128,23 +129,51 @@
       font-size: 11px;
     }
 
+    .add-row {
+      display: flex;
+      border-top: 1px solid #2e2e2e;
+    }
     .add-btn {
+      flex: 1;
       display: flex;
       align-items: center;
       gap: 5px;
       padding: 6px 9px;
-      border-top: 1px solid #2e2e2e;
       cursor: pointer;
       color: #4a90d9;
       font-size: 11px;
       background: none;
-      border-left: none; border-right: none; border-bottom: none;
-      width: 100%;
+      border: none;
+      border-right: 1px solid #2e2e2e;
       text-align: left;
     }
     .add-btn:hover { background: #252525; color: #6baee8; }
     .add-btn:disabled { color: #444; cursor: default; }
     .add-btn:disabled:hover { background: none; }
+    .add-all-btn {
+      display: flex;
+      align-items: center;
+      padding: 6px 9px;
+      cursor: pointer;
+      color: #888;
+      font-size: 11px;
+      background: none;
+      border: none;
+      white-space: nowrap;
+    }
+    .add-all-btn:hover { background: #252525; color: #aaa; }
+    .watch-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-top: 1px solid #2e2e2e;
+      cursor: pointer;
+      color: #777;
+      font-size: 11px;
+    }
+    .watch-row:hover { color: #aaa; }
+    .watch-row input { cursor: pointer; accent-color: #4a90d9; margin: 0; }
 
     /* ---- Divider ---- */
     .divider {
@@ -218,7 +247,14 @@
       <div class="item-list" id="item-list">
         <div class="empty-state">Select nodes on the canvas, then click Add.</div>
       </div>
-      <button type="button" class="add-btn" id="add-btn" disabled>+ Add Selection</button>
+      <div class="add-row">
+        <button type="button" class="add-btn" id="add-btn" disabled>+ Add Selection</button>
+        <button type="button" class="add-all-btn" id="add-all-btn">+ Add All</button>
+      </div>
+      <label class="watch-row">
+        <input type="checkbox" id="watch-all-cb" />
+        <span>Auto-add new nodes</span>
+      </label>
     </div>
   </div>
 
@@ -227,7 +263,7 @@
   <!-- Chat -->
   <div class="chat-area">
     <textarea id="chat-input" placeholder="Tell Claude what to look at…" disabled></textarea>
-    <button class="send-btn" id="send-btn" disabled>Send to Claude ↗</button>
+    <button type="button" class="send-btn" id="send-btn" disabled>Send to Claude ↗</button>
   </div>
 
   <script>
@@ -240,6 +276,8 @@
     const badge = document.getElementById('badge');
     const itemList = document.getElementById('item-list');
     const addBtn = document.getElementById('add-btn');
+    const addAllBtn = document.getElementById('add-all-btn');
+    const watchAllCb = document.getElementById('watch-all-cb');
     const chatInput = document.getElementById('chat-input');
     const sendBtn = document.getElementById('send-btn');
 
@@ -354,6 +392,14 @@
     // ---- Add selection ----
     addBtn.addEventListener('click', () => {
       parent.postMessage({ pluginMessage: { type: 'add_selection' } }, '*');
+    });
+
+    addAllBtn.addEventListener('click', () => {
+      parent.postMessage({ pluginMessage: { type: 'add_all' } }, '*');
+    });
+
+    watchAllCb.addEventListener('change', () => {
+      parent.postMessage({ pluginMessage: { type: 'set_watch_all', enabled: watchAllCb.checked } }, '*');
     });
 
     // ---- Send ----
